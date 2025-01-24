@@ -11,12 +11,6 @@ void setup() {
   // Magnetic Switch Pin
   // 1 = disconnected, 0 = connected
   pinMode(MagneticSwitchPin, INPUT_PULLUP);
-
-  pinMode(RelayControlPin, OUTPUT);
-  
-  // Output from relay, input to the board
-  // 1 = disconnected, 0 = connected 
-  pinMode(RelayOutputPin, INPUT_PULLUP);
   Serial.begin(9600);
 }
 
