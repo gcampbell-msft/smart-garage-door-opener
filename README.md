@@ -25,7 +25,7 @@ TODO: Insert diagrams of the schematic of the circuits and the layout of the cir
 
 TODO: Maybe sublink to a .md file in the docs folder.
 
-## Future work!
+## Future work
 
 - Create packaging for the microcontroller and wiring. 
 - Investigate relocating the smart garage door opener to on top of the garage door opener, rather than the attic. This will be cleaner and mitigate wire usage.
