@@ -1,5 +1,7 @@
 # Specs of Garage Door Opener
 
+TODO: Update, this information is out of date.
+
 ## Voltage Difference between terminals on Garage Door Opener
 
 The measured voltage between the terminals on my Garage Door Opener is 5.84. 
