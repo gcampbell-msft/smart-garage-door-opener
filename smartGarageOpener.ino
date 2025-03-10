@@ -35,11 +35,8 @@ int wifiTime = 0;
 bool initialized = false;
 GarageDoorState garageDoorState = Closed;
 
-void setupWifi()
+void connectWifi()
 {
-  // Connect to WiFi
-  WiFi.mode(WIFI_STA);
-  WiFi.setPhyMode(WIFI_PHY_MODE_11G);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) 
   {
@@ -47,6 +44,16 @@ void setupWifi()
      digitalWrite(ONBOARDLED, LOW);
      Serial.print("*");
   }
+
+  digitalWrite(ONBOARDLED, HIGH);
+}
+
+void setupWifi()
+{
+  // Connect to WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.setPhyMode(WIFI_PHY_MODE_11G);
+  connectWifi();
   
   Serial.println("");
   Serial.println("WiFi connection Successful");
@@ -183,20 +190,16 @@ void loop()
   int checkWifiTime = millis();
 
   // checking for WIFI connection
-  if ((WiFi.status() != WL_CONNECTED))
-  {
-    if (checkWifiTime - wifiTime >= WIFI_CHECK_DELAY) {
-      digitalWrite(ONBOARDLED, LOW);
-      Serial.print(millis());
-      Serial.println("Reconnecting to WIFI network");
+  if (checkWifiTime - wifiTime >= WIFI_CHECK_DELAY) {
+    if (WiFi.status() != WL_CONNECTED) {
       WiFi.disconnect();
-      WiFi.reconnect();
-      wifiTime = checkWifiTime;
-      digitalWrite(ONBOARDLED, HIGH);
-    } else {
-      // If we're not connected, we don't want to do anything else.
-      return;
+      delay(500);
+      Serial.print(millis());
+      Serial.println("Reconnecting to WIFI network...");
+      connectWifi();
     }
+
+    wifiTime = checkWifiTime;
   }
 
   if (!client.connected())
