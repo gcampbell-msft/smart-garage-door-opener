@@ -25,11 +25,55 @@
 
 ## Home Assistant Setup
 
-TODO: Add details about setup for MQTT and setup of sensors and cover.
-
 - Add [MQTT](https://www.home-assistant.io/integrations/mqtt) integration.
-- TODO: Add `cover` .yaml
-- TODO: Add `sensor` .yaml
+- Add device YAML configurations. See below.
+
+### YAML Configurations
+
+These configurations need to be defined in `configuration.yaml`. There are a multitude of options for [editing this file](https://www.home-assistant.io/docs/configuration/#to-set-up-access-to-the-files-and-prepare-an-editor). 
+
+#### Cover YAML
+
+```yaml
+cover:
+  - name: Garage Door
+    unique_id: "garage_door"
+    availability:
+      - topic: "garage_door/availability"
+        payload_available: "available"
+        payload_not_available: "unavailable"
+    command_topic: "garage_door/buttonpress"
+    payload_stop:
+    state_topic: "garage_door/status"
+    device:
+      name: "Smart Garage Door Opener"
+      via_device: "esp8266"
+      model: "Arduino Mega"
+      manufacturer: "Arduino"
+      identifiers: "arduino_garage_door_opener"
+```
+
+#### Sensor YAML
+
+```yaml
+sensor:
+  - name: Garage Door Sensor
+    availability:
+      - topic: "garage_door/availability"
+        payload_available: "available"
+        payload_not_available: "unavailable"
+    state_topic: "garage_door/status"
+    unique_id: "garage_door_sensor"
+    force_update: true
+    device_class: enum
+    options:
+      - open
+      - closed
+      - opening
+      - closing
+```
+
+## MQTT Details
 
 TODO: Maybe add information here and/or an .md doc detailing learnings and information about MQTT, birth and will messages, availability messages.
 
