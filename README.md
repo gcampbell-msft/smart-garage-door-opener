@@ -77,9 +77,12 @@ sensor:
 
 TODO: Maybe add information here and/or an .md doc detailing learnings and information about MQTT, birth and will messages, availability messages.
 
-## Smart Garage Door Schematic and Layout
+## Smart Garage Door Schematic
 
-TODO: Insert diagrams of the schematic of the circuits and the layout of the circuits, possibly include pictures. 
+![Firmware Schematic](firmwareSchematic.png)
+
+- D0 -> Relay -> Garage Door Opener terminals
+- Reed Switch Sensor -> Capacitor (In parallel) -> D1
 
 ## Journey and roadblocks
 
