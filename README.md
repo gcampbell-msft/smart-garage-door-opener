@@ -84,6 +84,8 @@ TODO: Maybe add information here and/or an .md doc detailing learnings and infor
 - D0 -> Relay -> Garage Door Opener terminals
 - Reed Switch Sensor -> Capacitor (In parallel) -> D1
 
+Power is provided through the USB connection on the NodeMCU.
+
 ## Journey and roadblocks
 
 TODO: Maybe sublink to a .md file in the docs folder.
