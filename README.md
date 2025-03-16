@@ -80,6 +80,7 @@ TODO: Maybe add information here and/or an .md doc detailing learnings and infor
 ## Smart Garage Door Schematic
 
 ![Firmware Schematic](firmwareSchematic.png)
+![alt text](image.png)
 
 - D0 -> Relay -> Garage Door Opener terminals
 - Reed Switch Sensor -> Capacitor (In parallel) -> D1
