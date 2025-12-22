@@ -98,3 +98,25 @@ Some things to include in the journey were that I started with a very small esp8
 
 - Create packaging for the microcontroller and wiring. 
 - Investigate relocating the smart garage door opener to on top of the garage door opener, rather than the attic. This will be cleaner and mitigate wire usage.
+
+## Converting my Garage Door Opener to raw esp C++ code, rather than arduino. 
+
+So far, I have the WIFI connecting, the MQTT subscribing to the event of the status of the garage door, and the LED blinking.
+
+My next goals are the following: 
+- Implement reading a sensor value, this will read the magnetic sensor to get the garage door state. 
+- Implement events that track the WIFI status so that we can safely handle if we get disconnected from the WIFI. 
+- Implement events handling MQTT disconnection in a similar way.
+- I want to refresh my memory about interrupt handlers as well as callbacks so that I can make my code fully event-driven, rather than a main loop that is iterating constantly. 
+
+Depending on the architecture support from esp, I want events for the following:
+- MQTT events
+- Wifi events
+- I want an event driven sensor reading, if possible, I imagine there's an interrupt handler for when the sensor state changes?
+
+Having the even driven structure should make it more performant, as well as making it easier to have a state machine. 
+Essentially, we can first set up the initial state, and then we can attach the event handlers which will control the state machine. 
+
+### Build system
+
+Right now, we're just relying on the makefile build system, since it's from the docs. I build from the command-line in the msys.exe environment. However, I'dd like to move towards fully CMake to take advantage of the CMake Tools extension. 
