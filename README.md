@@ -5,6 +5,15 @@
   - Detect the state of the garage door.
   - Control the garage door remotely.
 - Refresh my memory about various computer engineering concepts. 
+- Refresh my C++ programming. 
+
+## Journey and roadblocks
+
+TODO: Maybe sublink to a .md file in the docs folder.
+
+Might use [this guide / repo](https://github.com/skills/github-pages) to create a blog hosted on this github repo, using GitHub Pages. Another [docs page](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll/about-github-pages-and-jekyll). This could also lead to a new project creating my own website to point to these projects. I think it's best to make this repo have the end result of this project, but at the top of the readme, I can link to a blog that details how I got here.
+
+Some things to include in the journey were that I started with a very small esp8266, used an fdti to flash. Then, didn't want to deal with the limitations of some of the pins when it came to development, I'd have to do special things when flashing, and also unplug a bunch to flash, and didn't want to deal with that. Switched to esp12e, had issues and also simply learned about 12f, switched, had rfi issues, slowly investigated, took a couple week break, then investigated again, tried the capacitor on the reed switch. Come to think of it, I actually originally started with an arduino, but it was cheaper to use an esp. 
 
 ## Materials
 
@@ -86,15 +95,7 @@ TODO: Maybe add information here and/or an .md doc detailing learnings and infor
 
 Power is provided through the USB connection on the NodeMCU.
 
-## Journey and roadblocks
-
-TODO: Maybe sublink to a .md file in the docs folder.
-
-Might use [this guide / repo](https://github.com/skills/github-pages) to create a blog hosted on this github repo, using GitHub Pages. Another [docs page](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll/about-github-pages-and-jekyll). This could also lead to a new project creating my own website to point to these projects. I think it's best to make this repo have the end result of this project, but at the top of the readme, I can link to a blog that details how I got here.
-
-Some things to include in the journey were that I started with a very small esp8266, used an fdti to flash. Then, didn't want to deal with the limitations of some of the pins when it came to development, I'd have to do special things when flashing, and also unplug a bunch to flash, and didn't want to deal with that. Switched to esp12e, had issues and also simply learned about 12f, switched, had rfi issues, slowly investigated, took a couple week break, then investigated again, tried the capacitor on the reed switch. Come to think of it, I actually originally started with an arduino, but it was cheaper to use an esp. 
-
 ## Future work
 
-- Create packaging for the microcontroller and wiring. 
-- Investigate relocating the smart garage door opener to on top of the garage door opener, rather than the attic. This will be cleaner and mitigate wire usage.
+- Create packaging for the microcontroller and wiring.
+- Consider adding another reed switch to explicitly sense when the garage door is fully open.
