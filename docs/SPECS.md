@@ -2,10 +2,6 @@
 
 TODO: Update, this information is out of date.
 
-## ESP8266-12F NodeMCU Microcontroller
-
-TODO: Insert link
-
 ## Voltage Difference between terminals on Garage Door Opener
 
 The measured voltage between the terminals on my Garage Door Opener is 5.84. 
