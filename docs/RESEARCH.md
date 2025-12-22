@@ -1,11 +1,5 @@
 # Background Research
 
-## How to enact the garage door? 
-
-## How to integrate a custom device with Home Assistant?
-
-### What connectivity is better? Bluetooth? Wifi?
-
 #### Bluetooth
 
 - A blog that may have useful ideas: https://community.home-assistant.io/t/help-with-custom-bluetooth-device-integration/231856
