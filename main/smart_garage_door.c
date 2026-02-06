@@ -29,8 +29,9 @@
 
 #include "mqtt_credentials.h"
 #include "mqtt_client.h"
+#include "garage_state_machine.h"
 
-#define EXAMPLE_ESP_MAXIMUM_RETRY  10
+#define ESP_MAXIMUM_WIFI_RETRY  10
 #define ON_BOARD_LED_PIN GPIO_Pin_2 // D4 pin
 #define ON_BOARD_LED GPIO_NUM_2 // D4
 #define REED_SWITCH_INPUT_PIN GPIO_Pin_4 // D2
@@ -43,7 +44,11 @@ static EventGroupHandle_t s_wifi_event_group;
 static esp_mqtt_client_handle_t mqtt_handle;
 
 /* Timer handle */
-TimerHandle_t notify_timeout_timer_handle;
+TimerHandle_t wifi_retry_timer_handle;
+TimerHandle_t state_machine_timer_handle;
+
+#define WIFI_RETRY_INTERVAL_MS (30 * 60 * 1000) // 30 minutes in milliseconds
+
 
 /* The event group allows multiple bits for each event, but we only care about two events:
  * - we are connected to the AP with an IP
@@ -56,11 +61,10 @@ static const char* WIFI_TAG = "wifi_station";
 static const char* STATE_MACHINE_TAG = "state_machine";
 static const char* MQTT_TAG = "mqtt_client";
 static const char* TIMER_TAG = "timer";
-static const char* TIMER_FINISHED = "timer_finished";
 static const char* COMMAND_OPEN = "OPEN";
 static const char* COMMAND_CLOSE = "CLOSE";
 
-//#define TESTING
+#define TESTING
 #ifdef TESTING
 static const char* STATUS_TOPIC = "garage_door/status_TEST";
 static const char* AVAILABILITY_TOPIC = "garage_door/availability_TEST";
@@ -71,38 +75,17 @@ static const char* AVAILABILITY_TOPIC = "garage_door/availability";
 static const char* COMMAND_TOPIC = "garage_door/buttonpress";
 #endif
 
-enum GarageDoorState {
-    Closed,
-    Open,
-    Closing,
-    Opening,
-    Unknown
-};
-static enum GarageDoorState garageDoorState = Unknown;
-
-/// @brief Converts the enum GarageDoorState to a string representation. This needs to match the setup in Home Assistant.
-/// @param state The garage door state enum value.
-/// @return A string representation of the garage door state. This will match what Home Assistant expects.
-char* getGarageDoorStateString(enum GarageDoorState state) {
-    switch (state) {
-        case Closed:
-            return "CLOSED";
-        case Open:
-            return "OPEN";
-        case Closing:
-            return "CLOSING";
-        case Opening:
-            return "OPENING";
-        case Unknown:
-        default:
-            return "UNKNOWN";
-    }
-}
+// State machine instance
+static garage_state_machine_t state_machine;
 
 static int s_retry_num = 0;
 
 // state machine event queue handle
 static xQueueHandle state_machine_queue = NULL;
+
+// Forward declarations for WiFi retry timer functions
+static void start_wifi_retry_timer(void);
+static void stop_wifi_retry_timer(void);
 
 /// @brief GPIO interrupt handler for the reed switch input pin.
 /// @param arg Will only be REED_SWITCH_TAG to indicate the source of the interrupt. 
@@ -129,137 +112,181 @@ static void start_button_press_task()
     xTaskCreate(button_press_task, "button_press_task", 2048, NULL, 15, NULL);
 }
 
-/// @brief Timer callback that notifies the state machine task that the timer has finished.
-static void notify_timeout_handler()
+/// @brief Timer callback that updates the state machine timer periodically.
+static void state_machine_timer_callback(TimerHandle_t xTimer)
 {
-    ESP_LOGI(TIMER_TAG, "Notify timeout handler triggered, sending TIMER_FINISHED to state machine");
-    xQueueSend(state_machine_queue, &TIMER_FINISHED, 0);
-    notify_timeout_timer_handle = NULL;
+    // Update timer by 100ms (this timer fires every 100ms)
+    garage_transition_result_t result = garage_sm_update_timer(&state_machine, 100);
+    
+    // If timer caused a state transition, execute the actions
+    if (result.state_changed) {
+        ESP_LOGI(TIMER_TAG, "Timer expired, transitioning to %s", garage_state_to_string(result.new_state));
+        
+        // Publish new state to MQTT
+        if (result.actions.publish_state) {
+            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, 
+                                   garage_state_to_string(result.new_state), 0, 0, 1);
+            ESP_LOGI(WIFI_TAG, "Published state due to timer: %s", garage_state_to_string(result.new_state));
+        }
+    }
 }
 
-/// @brief Starts a timer that will notify the state machine task after 15 seconds.
-/// This is used to check if we're still in the closing or opening state after the expected time.
-static void start_notify_timeout_timer()
+/// @brief Converts input string to garage event type
+/// @param input The input string from the queue
+/// @param sensor_level The GPIO level if input is REED_SWITCH_TAG, otherwise ignored
+/// @return The corresponding garage event
+static garage_event_t input_to_event(const char* input, int sensor_level)
 {
-    notify_timeout_timer_handle = xTimerCreate("possible_timeout_timer", pdMS_TO_TICKS(15000), pdFALSE, ( void * ) 0, notify_timeout_handler);
-    if (notify_timeout_timer_handle == NULL) {
-        ESP_LOGE(WIFI_TAG, "Failed to create notify timeout timer");
-        return;
+    if (input == REED_SWITCH_TAG) {
+        return sensor_level == 0 ? GARAGE_EVENT_SENSOR_CLOSED : GARAGE_EVENT_SENSOR_OPEN;
+    } else if (input == COMMAND_OPEN) {
+        return GARAGE_EVENT_COMMAND_OPEN;
+    } else if (input == COMMAND_CLOSE) {
+        return GARAGE_EVENT_COMMAND_CLOSE;
+    }
+    return GARAGE_EVENT_NONE;
+}
+
+/// @brief Executes actions returned by state machine
+/// @param actions The actions to execute
+/// @param new_state The new state after transition
+static void execute_state_actions(const garage_actions_t* actions, garage_state_t new_state)
+{
+    if (actions->trigger_button_press) {
+        ESP_LOGI(STATE_MACHINE_TAG, "Triggering button press");
+        start_button_press_task();
     }
     
-    if (xTimerStart(notify_timeout_timer_handle, 0) != pdPASS) {
-        ESP_LOGE(WIFI_TAG, "Failed to start notify timeout timer");
-    } else {
-        ESP_LOGI(WIFI_TAG, "Started notify timeout timer");
-    }
-}
-
-/// @brief Sets the garage door state and publishes the new state to MQTT.
-/// @note This function should only be called from the state machine task.
-/// @param newState The new state to set.
-void setGarageStateValue(enum GarageDoorState newState) {
-    garageDoorState = newState;
-    switch (newState) {
-        case Closed:
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, "closed", 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Garage door state set to closed");
-            break;
-        case Open:
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, "open", 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Garage door state set to open");
-            break;
-        case Closing:
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, "closing", 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Garage door state set to closing");
-            start_notify_timeout_timer();
-            break;
-        case Opening:
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, "opening", 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Garage door state set to opening");
-            start_notify_timeout_timer();
-            break;
-        default:
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, "None", 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Garage door state set to None");
-            break;
+    if (actions->publish_state) {
+        const char* state_str = garage_state_to_string(new_state);
+        ESP_LOGI(STATE_MACHINE_TAG, "Publishing state: %s", state_str);
+        esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, state_str, 0, 0, 1);
     }
 }
 
 /// @brief State machine handler task that processes events from the state machine queue.
 /// This will read from the state_machine_queue and update the garage door state accordingly.
-/// @param arg 
+/// @param arg Unused
 static void state_machine_handler(void *arg)
 {
     char* input;
 
-    // State machine:
-    // OPENING -> OPEN -> CLOSING -> CLOSED, UNKNOWN
-
     for (;;) {
-        // This queue will only receive events when the reed switch state changes or we recieve MQTT commands.
+        // Wait for events from the queue
         if (xQueueReceive(state_machine_queue, &input, portMAX_DELAY)) {
             ESP_LOGI(STATE_MACHINE_TAG, "State machine received input: %s", input);
 
-            switch (garageDoorState) {
-                case Closed:
-                    if (input == REED_SWITCH_TAG) {
-                        int reedSwitchLevel = gpio_get_level(REED_SWITCH_INPUT_GPIO);
-                        if (reedSwitchLevel == 1) {
-                            setGarageStateValue(Opening);
-                        }
-                    } else if (input == COMMAND_OPEN) {
-                        start_button_press_task();
-                        setGarageStateValue(Opening);
-                    }
-                    break;
-                case Open:
-                    if (input == REED_SWITCH_TAG) {
-                        int reedSwitchLevel = gpio_get_level(REED_SWITCH_INPUT_GPIO);
-                        if (reedSwitchLevel == 0) {
-                            setGarageStateValue(Closed);
-                        }
-                    } else if (input == COMMAND_CLOSE) {
-                        start_button_press_task();
-                        setGarageStateValue(Closing);
-                    }
-                    break;
-                case Closing:
-                    if (input == REED_SWITCH_TAG) {
-                        int reedSwitchLevel = gpio_get_level(REED_SWITCH_INPUT_GPIO);
-                        if (reedSwitchLevel == 0) {
-                            setGarageStateValue(Closed);
-                        }
-                    } else if (input == TIMER_FINISHED) {
-                        setGarageStateValue(Unknown);
-                    }
-                    break;
-                case Opening:
-                    if (input == REED_SWITCH_TAG) {
-                        int reedSwitchLevel = gpio_get_level(REED_SWITCH_INPUT_GPIO);
-                        if (reedSwitchLevel == 0) {
-                            setGarageStateValue(Closed);
-                        }
-                    } else if (input == TIMER_FINISHED) {
-                        setGarageStateValue(Open);
-                    }
-                    break;
-                case Unknown:
-                    if (input == REED_SWITCH_TAG) {
-                        int reedSwitchLevel = gpio_get_level(REED_SWITCH_INPUT_GPIO);
-                        if (reedSwitchLevel == 0) {
-                            setGarageStateValue(Closed);
-                        } else {
-                            setGarageStateValue(Open);
-                        }
-                    } else if (input == COMMAND_OPEN) {
-                        start_button_press_task();
-                        setGarageStateValue(Opening);
-                    } else if (input == COMMAND_CLOSE) {
-                        start_button_press_task();
-                        setGarageStateValue(Closing);
-                    }
-                    break;
+            // Get sensor level if needed
+            int sensor_level = 0;
+            if (input == REED_SWITCH_TAG) {
+                sensor_level = gpio_get_level(REED_SWITCH_INPUT_GPIO);
             }
+
+            // Convert input to event and process it
+            garage_event_t event = input_to_event(input, sensor_level);
+            if (event != GARAGE_EVENT_NONE) {
+                garage_transition_result_t result = garage_sm_process_event(&state_machine, event);
+                
+                if (result.state_changed) {
+                    ESP_LOGI(STATE_MACHINE_TAG, "State changed to: %s", 
+                            garage_state_to_display_string(result.new_state));
+                }
+                
+                // Execute the actions
+                execute_state_actions(&result.actions, result.new_state);
+            }
+        }
+    }
+}
+
+typedef esp_err_t (*wifi_func)(void);
+
+static void mqtt_start(void) {
+    esp_mqtt_client_start(mqtt_handle);
+}
+
+/// @brief Method that waits for WiFi connection to be established or fail.
+/// @param func Function that could either be esp_wifi_start or esp_wifi_connect.
+void wifi_wait_connected(wifi_func func) {
+    s_wifi_event_group = xEventGroupCreate();
+    ESP_ERROR_CHECK(func());
+
+    ESP_LOGI(WIFI_TAG, "wifi_init_sta finished.");
+
+    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
+     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+            pdFALSE,
+            pdFALSE,
+            portMAX_DELAY);
+
+    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
+     * happened. */
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(WIFI_TAG, "connected to ap SSID:%s password:%s",
+                 WIFI_SSID, WIFI_PASSWORD);
+        gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
+        stop_wifi_retry_timer(); // Stop retry timer on successful connection
+        mqtt_start(); // Start MQTT client
+    } else if (bits & WIFI_FAIL_BIT) {
+        ESP_LOGI(WIFI_TAG, "Failed to connect to SSID:%s, password:%s",
+                 WIFI_SSID, WIFI_PASSWORD);
+        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
+        start_wifi_retry_timer(); // Start 30-minute retry timer
+    } else {
+        ESP_LOGE(WIFI_TAG, "UNEXPECTED EVENT");
+        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
+    }
+
+    vEventGroupDelete(s_wifi_event_group);
+}
+
+/// @brief Timer callback that attempts to reconnect to WiFi.
+static void wifi_retry_timer_callback(TimerHandle_t xTimer)
+{
+    ESP_LOGI(WIFI_TAG, "WiFi retry timer triggered, attempting to reconnect...");
+    s_retry_num = 0; // Reset retry counter
+    wifi_wait_connected(esp_wifi_connect);
+}
+
+/// @brief Starts a timer that will attempt WiFi reconnection every 30 minutes.
+static void start_wifi_retry_timer(void)
+{
+    if (wifi_retry_timer_handle != NULL) {
+        // Timer already exists, just restart it
+        if (xTimerReset(wifi_retry_timer_handle, 0) != pdPASS) {
+            ESP_LOGE(WIFI_TAG, "Failed to reset WiFi retry timer");
+        }
+        return;
+    }
+
+    wifi_retry_timer_handle = xTimerCreate(
+        "wifi_retry_timer",
+        pdMS_TO_TICKS(WIFI_RETRY_INTERVAL_MS),
+        pdTRUE,  // Auto-reload: will repeat every 30 minutes
+        (void *)0,
+        wifi_retry_timer_callback
+    );
+
+    if (wifi_retry_timer_handle == NULL) {
+        ESP_LOGE(WIFI_TAG, "Failed to create WiFi retry timer");
+        return;
+    }
+
+    if (xTimerStart(wifi_retry_timer_handle, 0) != pdPASS) {
+        ESP_LOGE(WIFI_TAG, "Failed to start WiFi retry timer");
+    } else {
+        ESP_LOGI(WIFI_TAG, "Started WiFi retry timer (30 minute interval)");
+    }
+}
+
+/// @brief Stops the WiFi retry timer if it's running.
+static void stop_wifi_retry_timer(void)
+{
+    if (wifi_retry_timer_handle != NULL) {
+        if (xTimerStop(wifi_retry_timer_handle, 0) == pdPASS) {
+            ESP_LOGI(WIFI_TAG, "Stopped WiFi retry timer");
         }
     }
 }
@@ -269,13 +296,13 @@ static void state_machine_handler(void *arg)
 /// @param event_base Indicates the event base (WIFI_EVENT or IP_EVENT).
 /// @param event_id ID of the event.
 /// @param event_data Data associated with the event.
-static void event_handler(void* arg, esp_event_base_t event_base,
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
+        if (s_retry_num < ESP_MAXIMUM_WIFI_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGI(WIFI_TAG, "retry to connect to the AP");
@@ -298,8 +325,6 @@ static void event_handler(void* arg, esp_event_base_t event_base,
 /// @param void.
 void wifi_init_sta(void)
 {
-    s_wifi_event_group = xEventGroupCreate();
-
     tcpip_adapter_init();
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -307,8 +332,8 @@ void wifi_init_sta(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
 
     wifi_config_t wifi_config = {
         .sta = {
@@ -327,34 +352,9 @@ void wifi_init_sta(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-    ESP_ERROR_CHECK(esp_wifi_start() );
 
+    wifi_wait_connected(esp_wifi_start);
     ESP_LOGI(WIFI_TAG, "wifi_init_sta finished.");
-
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE,
-            pdFALSE,
-            portMAX_DELAY);
-
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(WIFI_TAG, "connected to ap SSID:%s password:%s",
-                 WIFI_SSID, WIFI_PASSWORD);
-        gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(WIFI_TAG, "Failed to connect to SSID:%s, password:%s",
-                 WIFI_SSID, WIFI_PASSWORD);
-        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
-    } else {
-        ESP_LOGE(WIFI_TAG, "UNEXPECTED EVENT");
-        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
-    }
-
-    vEventGroupDelete(s_wifi_event_group);
 }
 
 /// @brief Sets up GPIOs for on-board LED, reed switch input (with gpio ISR handler), and relay control output.
@@ -469,7 +469,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
 /// @brief Initializes and starts the MQTT client, sets up event handlers, and subscribes to necessary topics.
 /// @param void.
-static void mqtt_init_start(void)
+static void mqtt_init(void)
 {
     esp_mqtt_client_config_t mqtt_cfg = {
         .host = MQTT_BROKER_ADDRESS,
@@ -484,7 +484,6 @@ static void mqtt_init_start(void)
 
     mqtt_handle = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(mqtt_handle, ESP_EVENT_ANY_ID, mqtt_event_handler, mqtt_handle);
-    esp_mqtt_client_start(mqtt_handle);
 }
 
 void app_main()
@@ -516,16 +515,31 @@ void app_main()
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
 
+    // Initialize state machine
+    garage_sm_init(&state_machine, GARAGE_STATE_UNKNOWN);
+
     // Setup interrupt handlers and event queue
     state_machine_queue = xQueueCreate(5, sizeof(uint32_t));
     xTaskCreate(state_machine_handler, "state_machine_handler", 2048, NULL, 10, NULL);
+    
+    // Create periodic timer for state machine updates (100ms interval)
+    state_machine_timer_handle = xTimerCreate(
+        "sm_timer",
+        pdMS_TO_TICKS(100),  // 100ms period
+        pdTRUE,              // Auto-reload
+        (void *)0,
+        state_machine_timer_callback
+    );
+    if (state_machine_timer_handle != NULL) {
+        xTimerStart(state_machine_timer_handle, 0);
+    }
 
     // Sets up error indicator LED, GPIOs for reed switch and relay control.
     gpio_init();
 
+    // Sets up MQTT handles.
+    mqtt_init();
+
     // Sets up the wifi
     wifi_init_sta();
-
-    // Sets up MQTT and subscriptions.
-    mqtt_init_start();
 }
