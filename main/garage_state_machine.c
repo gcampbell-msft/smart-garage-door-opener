@@ -58,12 +58,12 @@ int garage_sm_get_timer_elapsed(const garage_state_machine_t* sm)
 const char* garage_state_to_string(garage_state_t state)
 {
     switch (state) {
-        case GARAGE_STATE_CLOSED:  return "CLOSED";
-        case GARAGE_STATE_OPEN:    return "OPEN";
-        case GARAGE_STATE_CLOSING: return "CLOSING";
-        case GARAGE_STATE_OPENING: return "OPENING";
+        case GARAGE_STATE_CLOSED:  return "closed";
+        case GARAGE_STATE_OPEN:    return "open";
+        case GARAGE_STATE_CLOSING: return "closing";
+        case GARAGE_STATE_OPENING: return "opening";
         case GARAGE_STATE_UNKNOWN:
-        default:                   return "UNKNOWN";
+        default:                   return "unknown";
     }
 }
 

@@ -64,7 +64,7 @@ static const char* TIMER_TAG = "timer";
 static const char* COMMAND_OPEN = "OPEN";
 static const char* COMMAND_CLOSE = "CLOSE";
 
-#define TESTING
+//#define TESTING
 #ifdef TESTING
 static const char* STATUS_TOPIC = "garage_door/status_TEST";
 static const char* AVAILABILITY_TOPIC = "garage_door/availability_TEST";
