@@ -39,3 +39,7 @@ You may need to set up what port you are using and what baud rate to use, etc. U
 ### Serial Monitor
 
 I recommend the [Serial Monitor Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.vscode-serial-monitor). 
+
+### [Optional] CMake usage. 
+
+TODO

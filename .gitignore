@@ -3,3 +3,4 @@
 **/build/
 *.old
 **/out/
+**/FLASH_INTERNAL.md

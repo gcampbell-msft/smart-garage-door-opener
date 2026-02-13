@@ -47,6 +47,9 @@
 TimerHandle_t wifi_retry_timer_handle;
 TimerHandle_t state_machine_timer_handle;
 
+// Enable test mode - simulates reed switch changes and commands
+#define TEST_MODE
+
 static const char* APP_TAG = "app";
 static const char* REED_SWITCH_TAG = "reed_switch";
 static const char* STATE_MACHINE_TAG = "state_machine";
@@ -54,11 +57,15 @@ static const char* TIMER_TAG = "timer";
 static const char* COMMAND_OPEN = "OPEN";
 static const char* COMMAND_CLOSE = "CLOSE";
 
-#define TESTING
-#ifdef TESTING
+#ifdef TEST_MODE
 #define STATUS_TOPIC "garage_door/status_TEST"
 #define AVAILABILITY_TOPIC "garage_door/availability_TEST"
 #define COMMAND_TOPIC "garage_door/buttonpress_TEST"
+
+static bool test_mode_wifi_ready = false;
+static bool test_mode_mqtt_ready = false;
+static const char* REED_SWITCH_OPEN_TAG = "OPEN";
+static const char* REED_SWITCH_CLOSE_TAG = "CLOSED";
 #else
 #define STATUS_TOPIC "garage_door/status"
 #define AVAILABILITY_TOPIC "garage_door/availability"
@@ -117,7 +124,11 @@ static void state_machine_timer_callback(TimerHandle_t xTimer)
 /// @return The corresponding garage event
 static garage_event_t input_to_event(const char* input, int sensor_level)
 {
+    #ifdef TEST_MODE
+    if (input == REED_SWITCH_OPEN_TAG || input == REED_SWITCH_CLOSE_TAG) {
+    #else
     if (input == REED_SWITCH_TAG) {
+    #endif
         return sensor_level == 0 ? GARAGE_EVENT_SENSOR_CLOSED : GARAGE_EVENT_SENSOR_OPEN;
     } else if (input == COMMAND_OPEN) {
         return GARAGE_EVENT_COMMAND_OPEN;
@@ -157,9 +168,17 @@ static void state_machine_handler(void *arg)
             ESP_LOGI(STATE_MACHINE_TAG, "State machine received input: %s", input);
 
             int sensor_level = 0;
+            #ifdef TEST_MODE
+            if (input == REED_SWITCH_OPEN_TAG) {
+                sensor_level = 1;
+            } else if (input == REED_SWITCH_CLOSE_TAG) {
+                sensor_level = 0;
+            }
+            #else
             if (input == REED_SWITCH_TAG) {
                 sensor_level = gpio_get_level(REED_SWITCH_INPUT_GPIO);
             }
+            #endif
 
             // Convert input to event and process it
             garage_event_t event = input_to_event(input, sensor_level);
@@ -211,6 +230,10 @@ void gpio_init(void)
 void on_wifi_connected_callback(void) {
     gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
     mqtt_start();
+#ifdef TEST_MODE
+    test_mode_wifi_ready = true;
+    ESP_LOGI(APP_TAG, "[TEST MODE] WiFi connected");
+#endif
 }
 
 void on_wifi_disconnected_callback(const int retry_count) {
@@ -219,6 +242,9 @@ void on_wifi_disconnected_callback(const int retry_count) {
 
 void on_wifi_got_ip_callback(const char* ip_addr) {
     gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
+#ifdef TEST_MODE
+    ESP_LOGI(APP_TAG, "[TEST MODE] Got IP: %s", ip_addr);
+#endif
 }
 
 static const wifi_event_callbacks_t wifi_callbacks = {
@@ -246,11 +272,100 @@ void mqtt_data_callback(const char* topic, int topic_len, const char* command, i
     }
 }
 
+#ifdef TEST_MODE
+static int ASSERT(bool condition, const char* testInfo, const char* errorMessage) {
+    if (condition) {
+        ESP_LOGI(APP_TAG, "[PASSED] %s", testInfo);
+        return 0;
+    } else {
+        ESP_LOGE(APP_TAG, "[FAILED] %s - %s", testInfo, errorMessage);
+        return 1;
+    }
+}
+
+/// @brief Test mode task that simulates various garage door events and commands
+/// @param arg Unused
+static void test_simulation_task(void *arg)
+{
+    ESP_LOGI(APP_TAG, "*** TEST MODE ACTIVE - Starting simulation ***");
+    int countFailed = 0;
+
+    // Wait 2 seconds for system to stabilize
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    
+    // Simulate door closed initially
+    ESP_LOGI(APP_TAG, "[TEST] Simulating reed switch: DOOR CLOSED");
+    xQueueSend(state_machine_queue, &REED_SWITCH_CLOSE_TAG, 0);
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_CLOSED, "Initial door state", "Door state mismatch - expected CLOSED");
+    
+    // Simulate OPEN command
+    ESP_LOGI(APP_TAG, "[TEST] Simulating OPEN command");
+    mqtt_publish(COMMAND_TOPIC, COMMAND_OPEN, 0, 1);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_OPENING, "State after OPEN command", "Door state mismatch - expected OPENING");
+
+    vTaskDelay(16000 / portTICK_PERIOD_MS);
+    ESP_LOGI(APP_TAG, "[TEST] After timeout, door should be OPEN");
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_OPEN, "State after opening timeout", "Door state mismatch - expected OPEN");
+
+    ESP_LOGI(APP_TAG, "[TEST] Simulating CLOSE command");
+    mqtt_publish(COMMAND_TOPIC, COMMAND_CLOSE, 0, 1);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_CLOSING, "State after CLOSE command", "Door state mismatch - expected CLOSING");
+
+    vTaskDelay(8000 / portTICK_PERIOD_MS);
+    xQueueSend(state_machine_queue, &REED_SWITCH_CLOSE_TAG, 0);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_CLOSED, "State after door closed", "Door state mismatch - expected CLOSED");
+
+    xQueueSend(state_machine_queue, &REED_SWITCH_OPEN_TAG, 0);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_OPENING, "State after door opened from sensor", "Door state mismatch - expected OPENING");
+
+    vTaskDelay(16000 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_OPEN, "State after opening timeout from sensor", "Door state mismatch - expected OPEN");
+
+    mqtt_publish(COMMAND_TOPIC, COMMAND_CLOSE, 0, 1);
+    vTaskDelay(16000 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_UNKNOWN, "State after CLOSE command + 15 s", "Door state mismatch - expected UNKNOWN due to timeout");
+    
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    xQueueSend(state_machine_queue, &REED_SWITCH_CLOSE_TAG, 0);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    countFailed += ASSERT(state_machine.current_state == GARAGE_STATE_CLOSED, "State after door closed from UNKNOWN", "Door state mismatch - expected CLOSED");
+
+    ESP_LOGI(APP_TAG, "*** TEST MODE - Simulation complete ***");
+    if (countFailed == 0) {
+        ESP_LOGI(APP_TAG, "ALL TESTS PASSED");
+    } else {
+        ESP_LOGE(APP_TAG, "%d TESTS FAILED", countFailed);
+    }
+    vTaskDelete(NULL);
+}
+
+/// @brief Starts test simulation task when both WiFi and MQTT are ready
+static void check_and_start_test_mode()
+{
+    if (test_mode_wifi_ready && test_mode_mqtt_ready) {
+        ESP_LOGI(APP_TAG, "Both WiFi and MQTT ready - starting test simulation");
+        xTaskCreate(test_simulation_task, "test_simulation", 4096, NULL, 5, NULL);
+    }
+}
+#endif
+
 void mqtt_connected_callback(void) {
     mqtt_publish(AVAILABILITY_TOPIC, "available", 0, 1);
     mqtt_subscribe(COMMAND_TOPIC, 0);
     mqtt_subscribe(STATUS_TOPIC, 0);
+    
+#ifdef TEST_MODE
+    test_mode_mqtt_ready = true;
+    ESP_LOGI(APP_TAG, "[TEST MODE] MQTT connected");
+    check_and_start_test_mode();
+#else
     xQueueSend(state_machine_queue, &REED_SWITCH_TAG, 0);
+#endif
 }
 
 const mqtt_config_t mqtt_cfg = {
@@ -311,14 +426,13 @@ void app_main()
         (void *)0,
         state_machine_timer_callback
     );
+    
     if (state_machine_timer_handle != NULL) {
         xTimerStart(state_machine_timer_handle, 0);
     }
 
     // Sets up error indicator LED, GPIOs for reed switch and relay control.
     gpio_init();
-
-    // Sets up MQTT handles.
     
     mqtt_init(&mqtt_cfg, &mqtt_callbacks);
 

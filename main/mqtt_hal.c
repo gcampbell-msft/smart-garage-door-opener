@@ -57,7 +57,7 @@ void mqtt_hal_log_info(const char* tag, const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    esp_log_write(ESP_LOG_INFO, tag, format, args);
+    esp_log_writev(ESP_LOG_INFO, tag, format, args);
     va_end(args);
 }
 
@@ -65,7 +65,7 @@ void mqtt_hal_log_error(const char* tag, const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    esp_log_write(ESP_LOG_ERROR, tag, format, args);
+    esp_log_writev(ESP_LOG_ERROR, tag, format, args);
     va_end(args);
 }
 
@@ -73,6 +73,6 @@ void mqtt_hal_log_debug(const char* tag, const char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    esp_log_write(ESP_LOG_DEBUG, tag, format, args);
+    esp_log_writev(ESP_LOG_DEBUG, tag, format, args);
     va_end(args);
 }
