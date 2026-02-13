@@ -52,22 +52,21 @@ void wifi_wait_connected(wifi_func func) {
     if (bits & WIFI_CONNECTED_BIT) {
         wifi_hal_log_info(WIFI_TAG, "connected to ap SSID:%s password:%s",
                  WIFI_SSID, WIFI_PASSWORD);
-        stop_wifi_retry_timer(); // Stop retry timer on successful connection
-        // Invoke connected callback if registered
+        stop_wifi_retry_timer();
         if (s_event_callbacks.on_connected != NULL) {
             s_event_callbacks.on_connected();
         }
     } else if (bits & WIFI_FAIL_BIT) {
         wifi_hal_log_info(WIFI_TAG, "Failed to connect to SSID:%s, password:%s",
                  WIFI_SSID, WIFI_PASSWORD);
-        start_wifi_retry_timer(); // Start 30-minute retry timer
-        // Invoke failed callback if registered
+        start_wifi_retry_timer();
         if (s_event_callbacks.on_failed != NULL) {
             s_event_callbacks.on_failed();
         }
     } else {
         wifi_hal_log_error(WIFI_TAG, "UNEXPECTED EVENT");
-        // Invoke failed callback if registered
+
+        
         if (s_event_callbacks.on_failed != NULL) {
             s_event_callbacks.on_failed();
         }

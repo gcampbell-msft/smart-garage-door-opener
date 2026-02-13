@@ -50,10 +50,8 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
         case MQTT_EVENT_CONNECTED:
             mqtt_hal_log_info(MQTT_TAG, "MQTT_EVENT_CONNECTED");
             
-            // Use retry manager to update state
             mqtt_retry_result_t result_connect = mqtt_retry_on_connected(&s_retry_state);
             
-            // Invoke connected callback if registered
             if (result_connect.should_callback_connected && s_mqtt_callbacks.on_connected != NULL) {
                 s_mqtt_callbacks.on_connected();
             }
@@ -61,15 +59,12 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
         case MQTT_EVENT_DISCONNECTED:
             mqtt_hal_log_info(MQTT_TAG, "MQTT_EVENT_DISCONNECTED");
             
-            // Use retry manager to determine action
             mqtt_retry_result_t result_disconnect = mqtt_retry_on_disconnect(&s_retry_state);
             
-            // Invoke disconnected callback if registered
             if (result_disconnect.should_callback_disconnected && s_mqtt_callbacks.on_disconnected != NULL) {
                 s_mqtt_callbacks.on_disconnected();
             }
             
-            // Execute action
             if (result_disconnect.action == MQTT_RETRY_ACTION_RECONNECT) {
                 mqtt_hal_log_info(MQTT_TAG, "Auto-reconnecting... (disconnect #%d)", 
                                   mqtt_retry_get_disconnect_count(&s_retry_state));
@@ -125,18 +120,14 @@ void mqtt_init(const mqtt_config_t* config, const mqtt_event_callbacks_t* callba
         return;
     }
 
-    // Store configuration
     s_mqtt_config = *config;
 
-    // Store callbacks if provided
     if (callbacks != NULL) {
         s_mqtt_callbacks = *callbacks;
     }
-    
-    // Initialize retry manager with auto-reconnect enabled
+
     mqtt_retry_init(&s_retry_state, true);
     
-    // Initialize retry manager with auto-reconnect enabled
     mqtt_retry_init(&s_retry_state, true);
 
     esp_mqtt_client_config_t mqtt_cfg = {

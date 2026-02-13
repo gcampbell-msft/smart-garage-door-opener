@@ -99,14 +99,11 @@ static void start_button_press_task()
 /// @brief Timer callback that updates the state machine timer periodically.
 static void state_machine_timer_callback(TimerHandle_t xTimer)
 {
-    // Update timer by 100ms (this timer fires every 100ms)
     garage_transition_result_t result = garage_sm_update_timer(&state_machine, 100);
     
-    // If timer caused a state transition, execute the actions
     if (result.state_changed) {
         ESP_LOGI(TIMER_TAG, "Timer expired, transitioning to %s", garage_state_to_string(result.new_state));
         
-        // Publish new state to MQTT
         if (result.actions.publish_state) {
             mqtt_publish(STATUS_TOPIC, garage_state_to_string(result.new_state), 0, 1);
             ESP_LOGI(STATE_MACHINE_TAG, "Published state due to timer: %s", garage_state_to_string(result.new_state));
@@ -159,7 +156,6 @@ static void state_machine_handler(void *arg)
         if (xQueueReceive(state_machine_queue, &input, portMAX_DELAY)) {
             ESP_LOGI(STATE_MACHINE_TAG, "State machine received input: %s", input);
 
-            // Get sensor level if needed
             int sensor_level = 0;
             if (input == REED_SWITCH_TAG) {
                 sensor_level = gpio_get_level(REED_SWITCH_INPUT_GPIO);
@@ -175,7 +171,6 @@ static void state_machine_handler(void *arg)
                             garage_state_to_display_string(result.new_state));
                 }
                 
-                // Execute the actions
                 execute_state_actions(&result.actions, result.new_state);
             }
         }
@@ -188,34 +183,24 @@ void gpio_init(void)
 {
     // Setup on-board LED
     gpio_config_t io_conf;
-    //disable interrupt
     io_conf.intr_type = GPIO_INTR_DISABLE;
-    //set as output mode
     io_conf.mode = GPIO_MODE_OUTPUT;
     //bit mask of the pins that you want to set,e.g.GPIO15/16
     // This enables both the on-board LED and the relay control output pin.
     io_conf.pin_bit_mask = ON_BOARD_LED_PIN | RELAY_CONTROL_OUTPUT_PIN;
-    //disable pull-down mode
     io_conf.pull_down_en = GPIO_MODE_DISABLE;
-    //disable pull-up mode
     io_conf.pull_up_en = GPIO_MODE_DISABLE;
-    //configure GPIO with the given settings
     gpio_config(&io_conf);
 
     // Setup reed switch input pin
     // interrupt on rising and falling edge.
     io_conf.intr_type = GPIO_INTR_ANYEDGE;
-    // set as input mode
     io_conf.mode = GPIO_MODE_INPUT;
     // bit mask of the pins that you want to set,e.g.GPIO15/16
     io_conf.pin_bit_mask = REED_SWITCH_INPUT_PIN;
-    // set pull up
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-    // disable pull down
     io_conf.pull_down_en = GPIO_MODE_DISABLE;
     gpio_config(&io_conf);
-
-    // Setup relay control output pin
 
     // install gpio isr service
     gpio_install_isr_service(0);
@@ -225,7 +210,7 @@ void gpio_init(void)
 
 void on_wifi_connected_callback(void) {
     gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
-    mqtt_start(); // Start MQTT client
+    mqtt_start();
 }
 
 void on_wifi_disconnected_callback(const int retry_count) {
@@ -329,29 +314,6 @@ void app_main()
     if (state_machine_timer_handle != NULL) {
         xTimerStart(state_machine_timer_handle, 0);
     }
-
-    // TODO: I want to refactor this so that I can have wifi and mqtt interfaces / implementatoins that can be tested both 
-    // locally and on the hardware. 
-    // For example, implement a mock implementation that mirrors the wifi and mqtt logic, so that I can test it 
-    // standalone for the handling of it, as well as my handling of connection events etc.,
-
-    // I think the order of operations is first to move the logic from this class into 
-    // separate wifi and mqtt interface and "classes", pull them out of this file
-    // Then, we can create mocks and test them by themselves. 
-    // Then, we can modify the application code to have a "test" mode where it, on the hardware, 
-    // tests what happens when the wifi connection is lost, or when mqtt disconnects, etc.
-
-    // One other feature I want to add is to try reconnecting to wifi a certain amount of times, then if we fail, wait a 
-    // certain amount of time, then try again, indefinitely. This will help with outages and reconnecting when wifi comes back on.
-
-    // Steps:
-    // 1. Move wifi logic into separate file. 
-    // 2. Once that's confirmed, refactor as needed such that it can have an interface.
-    // 3. Refactor so that the code actually uses the interface.
-    // 4. Create a mock implementation of the wifi interface that simulates connection, disconnection, and status changes.
-    // 5. Same thing for mqtt. 
-
-    // 6. Add logic for retrying wifi connection with backoff.
 
     // Sets up error indicator LED, GPIOs for reed switch and relay control.
     gpio_init();
