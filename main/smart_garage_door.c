@@ -29,9 +29,10 @@
 
 #include "mqtt_credentials.h"
 #include "mqtt_client.h"
+#include "mqtt_interface.h"
+#include "wifi_interface.h"
 #include "garage_state_machine.h"
 
-#define ESP_MAXIMUM_WIFI_RETRY  10
 #define ON_BOARD_LED_PIN GPIO_Pin_2 // D4 pin
 #define ON_BOARD_LED GPIO_NUM_2 // D4
 #define REED_SWITCH_INPUT_PIN GPIO_Pin_4 // D2
@@ -39,53 +40,36 @@
 #define RELAY_CONTROL_OUTPUT_PIN GPIO_Pin_5 // D1
 #define RELAY_CONTROL_OUTPUT_GPIO GPIO_NUM_5 // D1
 
-/* FreeRTOS event group to signal when we are connected*/
-static EventGroupHandle_t s_wifi_event_group;
-static esp_mqtt_client_handle_t mqtt_handle;
+#define ESP_MAXIMUM_WIFI_RETRY  10
+#define WIFI_RETRY_INTERVAL_MS  (30 * 60 * 1000) // 30 minutes in milliseconds
 
 /* Timer handle */
 TimerHandle_t wifi_retry_timer_handle;
 TimerHandle_t state_machine_timer_handle;
 
-#define WIFI_RETRY_INTERVAL_MS (30 * 60 * 1000) // 30 minutes in milliseconds
-
-
-/* The event group allows multiple bits for each event, but we only care about two events:
- * - we are connected to the AP with an IP
- * - we failed to connect after the maximum amount of retries */
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT      BIT1
-
+static const char* APP_TAG = "app";
 static const char* REED_SWITCH_TAG = "reed_switch";
-static const char* WIFI_TAG = "wifi_station";
 static const char* STATE_MACHINE_TAG = "state_machine";
-static const char* MQTT_TAG = "mqtt_client";
 static const char* TIMER_TAG = "timer";
 static const char* COMMAND_OPEN = "OPEN";
 static const char* COMMAND_CLOSE = "CLOSE";
 
-//#define TESTING
+#define TESTING
 #ifdef TESTING
-static const char* STATUS_TOPIC = "garage_door/status_TEST";
-static const char* AVAILABILITY_TOPIC = "garage_door/availability_TEST";
-static const char* COMMAND_TOPIC = "garage_door/buttonpress_TEST";
+#define STATUS_TOPIC "garage_door/status_TEST"
+#define AVAILABILITY_TOPIC "garage_door/availability_TEST"
+#define COMMAND_TOPIC "garage_door/buttonpress_TEST"
 #else
-static const char* STATUS_TOPIC = "garage_door/status";
-static const char* AVAILABILITY_TOPIC = "garage_door/availability";
-static const char* COMMAND_TOPIC = "garage_door/buttonpress";
+#define STATUS_TOPIC "garage_door/status"
+#define AVAILABILITY_TOPIC "garage_door/availability"
+#define COMMAND_TOPIC "garage_door/buttonpress"
 #endif
 
 // State machine instance
 static garage_state_machine_t state_machine;
 
-static int s_retry_num = 0;
-
 // state machine event queue handle
 static xQueueHandle state_machine_queue = NULL;
-
-// Forward declarations for WiFi retry timer functions
-static void start_wifi_retry_timer(void);
-static void stop_wifi_retry_timer(void);
 
 /// @brief GPIO interrupt handler for the reed switch input pin.
 /// @param arg Will only be REED_SWITCH_TAG to indicate the source of the interrupt. 
@@ -124,9 +108,8 @@ static void state_machine_timer_callback(TimerHandle_t xTimer)
         
         // Publish new state to MQTT
         if (result.actions.publish_state) {
-            esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, 
-                                   garage_state_to_string(result.new_state), 0, 0, 1);
-            ESP_LOGI(WIFI_TAG, "Published state due to timer: %s", garage_state_to_string(result.new_state));
+            mqtt_publish(STATUS_TOPIC, garage_state_to_string(result.new_state), 0, 1);
+            ESP_LOGI(STATE_MACHINE_TAG, "Published state due to timer: %s", garage_state_to_string(result.new_state));
         }
     }
 }
@@ -160,7 +143,7 @@ static void execute_state_actions(const garage_actions_t* actions, garage_state_
     if (actions->publish_state) {
         const char* state_str = garage_state_to_string(new_state);
         ESP_LOGI(STATE_MACHINE_TAG, "Publishing state: %s", state_str);
-        esp_mqtt_client_publish(mqtt_handle, STATUS_TOPIC, state_str, 0, 0, 1);
+        mqtt_publish(STATUS_TOPIC, state_str, 0, 1);
     }
 }
 
@@ -197,164 +180,6 @@ static void state_machine_handler(void *arg)
             }
         }
     }
-}
-
-typedef esp_err_t (*wifi_func)(void);
-
-static void mqtt_start(void) {
-    esp_mqtt_client_start(mqtt_handle);
-}
-
-/// @brief Method that waits for WiFi connection to be established or fail.
-/// @param func Function that could either be esp_wifi_start or esp_wifi_connect.
-void wifi_wait_connected(wifi_func func) {
-    s_wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK(func());
-
-    ESP_LOGI(WIFI_TAG, "wifi_init_sta finished.");
-
-    /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
-     * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE,
-            pdFALSE,
-            portMAX_DELAY);
-
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(WIFI_TAG, "connected to ap SSID:%s password:%s",
-                 WIFI_SSID, WIFI_PASSWORD);
-        gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
-        stop_wifi_retry_timer(); // Stop retry timer on successful connection
-        mqtt_start(); // Start MQTT client
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(WIFI_TAG, "Failed to connect to SSID:%s, password:%s",
-                 WIFI_SSID, WIFI_PASSWORD);
-        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
-        start_wifi_retry_timer(); // Start 30-minute retry timer
-    } else {
-        ESP_LOGE(WIFI_TAG, "UNEXPECTED EVENT");
-        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
-    }
-
-    vEventGroupDelete(s_wifi_event_group);
-}
-
-/// @brief Timer callback that attempts to reconnect to WiFi.
-static void wifi_retry_timer_callback(TimerHandle_t xTimer)
-{
-    ESP_LOGI(WIFI_TAG, "WiFi retry timer triggered, attempting to reconnect...");
-    s_retry_num = 0; // Reset retry counter
-    wifi_wait_connected(esp_wifi_connect);
-}
-
-/// @brief Starts a timer that will attempt WiFi reconnection every 30 minutes.
-static void start_wifi_retry_timer(void)
-{
-    if (wifi_retry_timer_handle != NULL) {
-        // Timer already exists, just restart it
-        if (xTimerReset(wifi_retry_timer_handle, 0) != pdPASS) {
-            ESP_LOGE(WIFI_TAG, "Failed to reset WiFi retry timer");
-        }
-        return;
-    }
-
-    wifi_retry_timer_handle = xTimerCreate(
-        "wifi_retry_timer",
-        pdMS_TO_TICKS(WIFI_RETRY_INTERVAL_MS),
-        pdTRUE,  // Auto-reload: will repeat every 30 minutes
-        (void *)0,
-        wifi_retry_timer_callback
-    );
-
-    if (wifi_retry_timer_handle == NULL) {
-        ESP_LOGE(WIFI_TAG, "Failed to create WiFi retry timer");
-        return;
-    }
-
-    if (xTimerStart(wifi_retry_timer_handle, 0) != pdPASS) {
-        ESP_LOGE(WIFI_TAG, "Failed to start WiFi retry timer");
-    } else {
-        ESP_LOGI(WIFI_TAG, "Started WiFi retry timer (30 minute interval)");
-    }
-}
-
-/// @brief Stops the WiFi retry timer if it's running.
-static void stop_wifi_retry_timer(void)
-{
-    if (wifi_retry_timer_handle != NULL) {
-        if (xTimerStop(wifi_retry_timer_handle, 0) == pdPASS) {
-            ESP_LOGI(WIFI_TAG, "Stopped WiFi retry timer");
-        }
-    }
-}
-
-/// @brief Event handler for WiFi and IP events.
-/// @param arg Unused. Only needed for event handler signature.
-/// @param event_base Indicates the event base (WIFI_EVENT or IP_EVENT).
-/// @param event_id ID of the event.
-/// @param event_data Data associated with the event.
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                                int32_t event_id, void* event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_num < ESP_MAXIMUM_WIFI_RETRY) {
-            esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI(WIFI_TAG, "retry to connect to the AP");
-        } else {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
-        ESP_LOGI(WIFI_TAG,"connect to the AP fail");
-        gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(WIFI_TAG, "got ip:%s",
-                 ip4addr_ntoa(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-        gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
-    }
-}
-
-/// @brief Initializes all the wifi components and connects to the AP.
-/// @param void.
-void wifi_init_sta(void)
-{
-    tcpip_adapter_init();
-
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASSWORD
-        },
-    };
-
-    /* Setting a password implies station will connect to all security modes including WEP/WPA.
-        * However these modes are deprecated and not advisable to be used. Incase your Access point
-        * doesn't support WPA2, these mode can be enabled by commenting below line */
-
-    if (strlen((char *)wifi_config.sta.password)) {
-        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    }
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-
-    wifi_wait_connected(esp_wifi_start);
-    ESP_LOGI(WIFI_TAG, "wifi_init_sta finished.");
 }
 
 /// @brief Sets up GPIOs for on-board LED, reed switch input (with gpio ISR handler), and relay control output.
@@ -398,93 +223,64 @@ void gpio_init(void)
     gpio_isr_handler_add(REED_SWITCH_INPUT_GPIO, gpio_isr_handler, (void *) REED_SWITCH_TAG);
 }
 
-/// @brief Callback function for MQTT events.
-/// @param event The MQTT event handle. Will contain ID and data
-/// @return ESP_OK on success, or an error code on failure.
-static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
-{
-    switch (event->event_id) {
-        case MQTT_EVENT_CONNECTED:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_CONNECTED");
-            esp_mqtt_client_publish(mqtt_handle, AVAILABILITY_TOPIC, "available", 0, 0, 1);
-            // We only need to subscribe to the command topic.
-            esp_mqtt_client_subscribe(mqtt_handle, COMMAND_TOPIC, 0);
-            esp_mqtt_client_subscribe(mqtt_handle, STATUS_TOPIC, 0);
-            // Initialize initial state by sending message that reed switch state changed.
-            xQueueSend(state_machine_queue, &REED_SWITCH_TAG, 0);
-            break;
-        case MQTT_EVENT_DISCONNECTED:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_DISCONNECTED");
-            esp_mqtt_client_start(mqtt_handle);
-            break;
-        case MQTT_EVENT_SUBSCRIBED:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-            break;
-        case MQTT_EVENT_UNSUBSCRIBED:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
-            break;
-        case MQTT_EVENT_PUBLISHED:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-            break;
-        case MQTT_EVENT_DATA:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_DATA");
-            printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-            printf("DATA=%.*s\r\n", event->data_len, event->data);
+void on_wifi_connected_callback(void) {
+    gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
+    mqtt_start(); // Start MQTT client
+}
 
-            if (event->topic_len == strlen(COMMAND_TOPIC) && strncmp(event->topic, COMMAND_TOPIC, event->topic_len) == 0) {
-                if (event->data_len == strlen(COMMAND_OPEN) && strncmp(event->data, COMMAND_OPEN, event->data_len) == 0) {
-                    ESP_LOGI(WIFI_TAG, "Received OPEN command");
-                    xQueueSend(state_machine_queue, &COMMAND_OPEN, 0);
-                } else if (event->data_len == strlen(COMMAND_CLOSE) && strncmp(event->data, COMMAND_CLOSE, event->data_len) == 0) {
-                    ESP_LOGI(WIFI_TAG, "Received CLOSE command");
-                    xQueueSend(state_machine_queue, &COMMAND_CLOSE, 0);
-                }
-            } else if (event->topic_len == strlen(STATUS_TOPIC) && strncmp(event->topic, STATUS_TOPIC, event->topic_len) == 0) {
-                ESP_LOGI(MQTT_TAG, "Received status update");
-                ESP_LOGI(MQTT_TAG, "Status: %.*s\r\n", event->data_len, event->data);
-            } else {
-                ESP_LOGI(MQTT_TAG, "Received message on unknown topic");
-            }
+void on_wifi_disconnected_callback(const int retry_count) {
+    gpio_set_level(ON_BOARD_LED, 0); // Turn on LED to indicate failure to connect
+}
 
-            break;
-        case MQTT_EVENT_ERROR:
-            ESP_LOGI(MQTT_TAG, "MQTT_EVENT_ERROR");
-            break;
-        default:
-            ESP_LOGI(MQTT_TAG, "Other event id:%d", event->event_id);
-            break;
+void on_wifi_got_ip_callback(const char* ip_addr) {
+    gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
+}
+
+static const wifi_event_callbacks_t wifi_callbacks = {
+    .on_sta_start = NULL,
+    .on_connected = on_wifi_connected_callback,
+    .on_disconnected = on_wifi_disconnected_callback,
+    .on_got_ip = on_wifi_got_ip_callback,
+    .on_failed = NULL
+};
+
+void mqtt_data_callback(const char* topic, int topic_len, const char* command, int command_len) {
+    if (topic_len == strlen(COMMAND_TOPIC) && strncmp(topic, COMMAND_TOPIC, topic_len) == 0) {
+        if (command_len == strlen(COMMAND_OPEN) && strncmp(command, COMMAND_OPEN, command_len) == 0) {
+            ESP_LOGI(APP_TAG, "Received OPEN command");
+            xQueueSend(state_machine_queue, &COMMAND_OPEN, 0);
+        } else if (command_len == strlen(COMMAND_CLOSE) && strncmp(command, COMMAND_CLOSE, command_len) == 0) {
+            ESP_LOGI(APP_TAG, "Received CLOSE command");
+            xQueueSend(state_machine_queue, &COMMAND_CLOSE, 0);
+        }
+    } else if (topic_len == strlen(STATUS_TOPIC) && strncmp(topic, STATUS_TOPIC, topic_len) == 0) {
+        ESP_LOGI(APP_TAG, "Received status update");
+        ESP_LOGI(APP_TAG, "Status: %.*s\r\n", command_len, command);
+    } else {
+        ESP_LOGI(APP_TAG, "Received message on unknown topic");
     }
-    return ESP_OK;
 }
 
-/// @brief A wrapper for the MQTT event handler to match the esp_event_handler_t signature. Primarily used for a generic logger.
-/// @param handler_args Arguments passed to the handler.
-/// @param base Event base.
-/// @param event_id Event ID.
-/// @param event_data Event data.
-static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
-    ESP_LOGD(WIFI_TAG, "Event dispatched from event loop base=%s, event_id=%d", base, event_id);
-    mqtt_event_handler_cb(event_data);
+void mqtt_connected_callback(void) {
+    mqtt_publish(AVAILABILITY_TOPIC, "available", 0, 1);
+    mqtt_subscribe(COMMAND_TOPIC, 0);
+    mqtt_subscribe(STATUS_TOPIC, 0);
+    xQueueSend(state_machine_queue, &REED_SWITCH_TAG, 0);
 }
 
-/// @brief Initializes and starts the MQTT client, sets up event handlers, and subscribes to necessary topics.
-/// @param void.
-static void mqtt_init(void)
-{
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .host = MQTT_BROKER_ADDRESS,
-        .port = 1883,
-        .username = MQTT_USER_NAME,
-        .password = MQTT_USER_PASSWORD,
-        .lwt_topic = AVAILABILITY_TOPIC,
-        .lwt_qos = 0,
-        .lwt_msg = "unavailable",
-        .lwt_retain = true,
-    };
-
-    mqtt_handle = esp_mqtt_client_init(&mqtt_cfg);
-    esp_mqtt_client_register_event(mqtt_handle, ESP_EVENT_ANY_ID, mqtt_event_handler, mqtt_handle);
-}
+const mqtt_config_t mqtt_cfg = {
+    .broker_address = MQTT_BROKER_ADDRESS,
+    .port = 1883,
+    .username = MQTT_USER_NAME,
+    .password = MQTT_USER_PASSWORD,
+    .lwt_topic = AVAILABILITY_TOPIC,
+    .lwt_message = "unavailable",
+};
+const mqtt_event_callbacks_t mqtt_callbacks = {
+    .on_data = mqtt_data_callback,
+    .on_connected = mqtt_connected_callback,
+    .on_disconnected = NULL
+};
 
 void app_main()
 {
@@ -508,9 +304,9 @@ void app_main()
     esp_log_level_set("TRANSPORT", ESP_LOG_VERBOSE);
     esp_log_level_set("OUTBOX", ESP_LOG_VERBOSE);
 
-    ESP_LOGI(MQTT_TAG, "[APP] Startup..");
-    ESP_LOGI(MQTT_TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
-    ESP_LOGI(MQTT_TAG, "[APP] IDF version: %s", esp_get_idf_version());
+    ESP_LOGI(APP_TAG, "[APP] Startup..");
+    ESP_LOGI(APP_TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(APP_TAG, "[APP] IDF version: %s", esp_get_idf_version());
     
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
@@ -534,12 +330,37 @@ void app_main()
         xTimerStart(state_machine_timer_handle, 0);
     }
 
+    // TODO: I want to refactor this so that I can have wifi and mqtt interfaces / implementatoins that can be tested both 
+    // locally and on the hardware. 
+    // For example, implement a mock implementation that mirrors the wifi and mqtt logic, so that I can test it 
+    // standalone for the handling of it, as well as my handling of connection events etc.,
+
+    // I think the order of operations is first to move the logic from this class into 
+    // separate wifi and mqtt interface and "classes", pull them out of this file
+    // Then, we can create mocks and test them by themselves. 
+    // Then, we can modify the application code to have a "test" mode where it, on the hardware, 
+    // tests what happens when the wifi connection is lost, or when mqtt disconnects, etc.
+
+    // One other feature I want to add is to try reconnecting to wifi a certain amount of times, then if we fail, wait a 
+    // certain amount of time, then try again, indefinitely. This will help with outages and reconnecting when wifi comes back on.
+
+    // Steps:
+    // 1. Move wifi logic into separate file. 
+    // 2. Once that's confirmed, refactor as needed such that it can have an interface.
+    // 3. Refactor so that the code actually uses the interface.
+    // 4. Create a mock implementation of the wifi interface that simulates connection, disconnection, and status changes.
+    // 5. Same thing for mqtt. 
+
+    // 6. Add logic for retrying wifi connection with backoff.
+
     // Sets up error indicator LED, GPIOs for reed switch and relay control.
     gpio_init();
 
     // Sets up MQTT handles.
-    mqtt_init();
+    
+    mqtt_init(&mqtt_cfg, &mqtt_callbacks);
 
     // Sets up the wifi
-    wifi_init_sta();
+    wifi_register_event_callbacks(&wifi_callbacks);
+    wifi_init_sta(ESP_MAXIMUM_WIFI_RETRY, WIFI_RETRY_INTERVAL_MS);
 }
