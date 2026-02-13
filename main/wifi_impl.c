@@ -11,16 +11,13 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-/* WiFi retry configuration */
 #define ESP_MAXIMUM_WIFI_RETRY  10
 #define WIFI_RETRY_INTERVAL_MS  (30 * 60 * 1000) // 30 minutes in milliseconds
 
 static const char* WIFI_TAG = "wifi_station";
 
-// WiFi event callbacks
 static wifi_event_callbacks_t s_event_callbacks = {0};
 
-// Retry state management
 static wifi_retry_state_t s_retry_state = {0};
 
 static EventGroupHandle_t s_wifi_event_group;
@@ -66,7 +63,7 @@ void wifi_wait_connected(wifi_func func) {
     } else {
         wifi_hal_log_error(WIFI_TAG, "UNEXPECTED EVENT");
 
-        
+
         if (s_event_callbacks.on_failed != NULL) {
             s_event_callbacks.on_failed();
         }
@@ -91,7 +88,6 @@ static void wifi_retry_timer_callback(TimerHandle_t xTimer)
 static void start_wifi_retry_timer(void)
 {
     if (s_wifi_retry_timer_handle != NULL) {
-        // Timer already exists, just restart it
         if (wifi_hal_timer_reset(s_wifi_retry_timer_handle, 0) != pdPASS) {
             wifi_hal_log_error(WIFI_TAG, "Failed to reset WiFi retry timer");
         }
@@ -138,17 +134,15 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         wifi_hal_wifi_connect();
-        // Invoke sta_start callback if registered
+
         if (s_event_callbacks.on_sta_start != NULL) {
             s_event_callbacks.on_sta_start();
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_hal_log_info(WIFI_TAG, "Disconnected from AP");
         
-        // Use retry manager to determine action
         wifi_retry_result_t result = wifi_retry_on_disconnect(&s_retry_state);
         
-        // Execute action
         if (result.action == WIFI_RETRY_ACTION_CONNECT) {
             wifi_hal_log_info(WIFI_TAG, "Retry %d: attempting to reconnect", wifi_retry_get_count(&s_retry_state));
             wifi_hal_wifi_connect();
@@ -158,7 +152,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             start_wifi_retry_timer();
         }
         
-        // Invoke disconnected callback if registered
         if (result.should_callback_disconnected && s_event_callbacks.on_disconnected != NULL) {
             s_event_callbacks.on_disconnected(result.callback_retry_count);
         }
@@ -166,17 +159,14 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         const char* ip_str = wifi_hal_get_ip_string_from_event(event_data);
         wifi_hal_log_info(WIFI_TAG, "got ip:%s", ip_str);
         
-        // Use retry manager to determine action
         wifi_retry_result_t result = wifi_retry_on_connected(&s_retry_state);
         
-        // Execute action
         if (result.action == WIFI_RETRY_ACTION_STOP_TIMER) {
             stop_wifi_retry_timer();
         }
         
         wifi_hal_event_group_set_bits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         
-        // Invoke got_ip callback if registered
         if (s_event_callbacks.on_got_ip != NULL) {
             s_event_callbacks.on_got_ip(ip_str);
         }
@@ -188,7 +178,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 /// @param retry_interval_ms Interval between retry attempts in milliseconds
 void wifi_init_sta(const int max_retries, const int retry_interval_ms)
 {
-    // Initialize retry manager
     wifi_retry_init(&s_retry_state, max_retries, retry_interval_ms);
 
     wifi_hal_tcpip_adapter_init();
