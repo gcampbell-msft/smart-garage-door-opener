@@ -10,7 +10,6 @@
 
 #include "driver/gpio.h"
 
-#include "wifi_credentials.h"
 #include "esp_system.h"
 #include "esp_spi_flash.h"
 #include "esp_log.h"
@@ -27,6 +26,7 @@
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
 
+#include "wifi_credentials.h"
 #include "mqtt_credentials.h"
 #include "mqtt_client.h"
 #include "mqtt_interface.h"

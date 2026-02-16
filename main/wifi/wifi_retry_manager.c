@@ -10,7 +10,7 @@ void wifi_retry_init(wifi_retry_state_t* state, int max_retries, int retry_inter
 {
     if (state == NULL) return;
     
-    memset(state, 0, sizeof(wifi_retry_state_t));
+    state->retry_count = 0;
     state->max_retries = max_retries;
     state->retry_interval_ms = retry_interval_ms;
     state->is_connected = false;

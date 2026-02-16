@@ -10,7 +10,6 @@ void mqtt_retry_init(mqtt_retry_state_t* state, bool auto_reconnect)
 {
     if (state == NULL) return;
     
-    memset(state, 0, sizeof(mqtt_retry_state_t));
     state->should_reconnect = auto_reconnect;
     state->is_connected = false;
     state->disconnect_count = 0;

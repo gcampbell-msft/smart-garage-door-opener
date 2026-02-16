@@ -129,8 +129,6 @@ void mqtt_init(const mqtt_config_t* config, const mqtt_event_callbacks_t* callba
     if (callbacks != NULL) {
         s_mqtt_callbacks = *callbacks;
     }
-
-    mqtt_retry_init(&s_retry_state, true);
     
     mqtt_retry_init(&s_retry_state, true);
 
