@@ -47,9 +47,6 @@
 TimerHandle_t wifi_retry_timer_handle;
 TimerHandle_t state_machine_timer_handle;
 
-// Enable test mode - simulates reed switch changes and commands
-#define TEST_MODE
-
 static const char* APP_TAG = "app";
 static const char* REED_SWITCH_TAG = "reed_switch";
 static const char* STATE_MACHINE_TAG = "state_machine";
@@ -242,9 +239,7 @@ void on_wifi_disconnected_callback(const int retry_count) {
 
 void on_wifi_got_ip_callback(const char* ip_addr) {
     gpio_set_level(ON_BOARD_LED, 1); // Turn off LED to indicate successful connection
-#ifdef TEST_MODE
-    ESP_LOGI(APP_TAG, "[TEST MODE] Got IP: %s", ip_addr);
-#endif
+    ESP_LOGI(APP_TAG, "Got IP: %s", ip_addr);
 }
 
 static const wifi_event_callbacks_t wifi_callbacks = {

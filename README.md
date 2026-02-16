@@ -9,11 +9,7 @@
 
 ## Journey and roadblocks
 
-TODO: Maybe sublink to a .md file in the docs folder.
-
-Might use [this guide / repo](https://github.com/skills/github-pages) to create a blog hosted on this github repo, using GitHub Pages. Another [docs page](https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll/about-github-pages-and-jekyll). This could also lead to a new project creating my own website to point to these projects. I think it's best to make this repo have the end result of this project, but at the top of the readme, I can link to a blog that details how I got here.
-
-Some things to include in the journey were that I started with a very small esp8266, used an fdti to flash. Then, didn't want to deal with the limitations of some of the pins when it came to development, I'd have to do special things when flashing, and also unplug a bunch to flash, and didn't want to deal with that. Switched to esp12e, had issues and also simply learned about 12f, switched, had rfi issues, slowly investigated, took a couple week break, then investigated again, tried the capacitor on the reed switch. Come to think of it, I actually originally started with an arduino, but it was cheaper to use an esp. 
+Check out the blog post documenting my journey [here](https://garrettcampbell3.github.io/)!
 
 ## Materials
 
@@ -26,6 +22,9 @@ Some things to include in the journey were that I started with a very small esp8
 - 1 small breadboard
 - [Jumper wires](https://www.amazon.com/dp/B0BTT31CBC?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [22 guage wire](https://www.amazon.com/dp/B07TX6BX47?ref=ppx_yo2ov_dt_b_fed_asin_title)
+
+- Garage Door opener is a WhisperDrive 1/2 HP. 
+  - The measured voltage across terminals is 5.84V.
 
 ### Smart Home (Home Assistant)
 
@@ -81,10 +80,6 @@ sensor:
       - opening
       - closing
 ```
-
-## MQTT Details
-
-TODO: Maybe add information here and/or an .md doc detailing learnings and information about MQTT, birth and will messages, availability messages.
 
 ## Smart Garage Door Schematic
 

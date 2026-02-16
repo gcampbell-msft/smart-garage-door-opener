@@ -9,6 +9,9 @@
 #include "mqtt_hal_interface.h"
 #include "esp_log.h"
 #include <stdarg.h>
+#include <stdio.h>
+
+#define LOG_BUFFER_SIZE 256
 
 /* ============================================================================
  * MQTT HAL Implementation
@@ -55,24 +58,30 @@ esp_err_t mqtt_hal_client_register_event(esp_mqtt_client_handle_t client,
 
 void mqtt_hal_log_info(const char* tag, const char* format, ...)
 {
+    char buffer[LOG_BUFFER_SIZE];
     va_list args;
     va_start(args, format);
-    esp_log_writev(ESP_LOG_INFO, tag, format, args);
+    vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
+    esp_log_write(ESP_LOG_INFO, tag, "%s", buffer);
 }
 
 void mqtt_hal_log_error(const char* tag, const char* format, ...)
 {
+    char buffer[LOG_BUFFER_SIZE];
     va_list args;
     va_start(args, format);
-    esp_log_writev(ESP_LOG_ERROR, tag, format, args);
+    vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
+    esp_log_write(ESP_LOG_ERROR, tag, "%s", buffer);
 }
 
 void mqtt_hal_log_debug(const char* tag, const char* format, ...)
 {
+    char buffer[LOG_BUFFER_SIZE];
     va_list args;
     va_start(args, format);
-    esp_log_writev(ESP_LOG_DEBUG, tag, format, args);
+    vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
+    esp_log_write(ESP_LOG_DEBUG, tag, "%s", buffer);
 }

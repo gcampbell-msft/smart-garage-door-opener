@@ -17,15 +17,17 @@ FetchContent_MakeAvailable(googletest)
 
 # Include the main source directory for headers
 include_directories(${CMAKE_SOURCE_DIR}/../main)
-include_directories(${CMAKE_SOURCE_DIR}/../main/interfaces)
+include_directories(${CMAKE_SOURCE_DIR}/../main/include)
+include_directories(${CMAKE_SOURCE_DIR}/../main/include/mqtt)
+include_directories(${CMAKE_SOURCE_DIR}/../main/include/wifi)
 
 add_executable(tests 
     test_state_machine.cpp
     test_wifi_retry.cpp
     test_mqtt_retry.cpp
-    ${CMAKE_SOURCE_DIR}/../main/garage_state_machine.c
-    ${CMAKE_SOURCE_DIR}/../main/wifi_retry_manager.c
-    ${CMAKE_SOURCE_DIR}/../main/mqtt_retry_manager.c
+    ${CMAKE_SOURCE_DIR}/../main/state_machine/garage_state_machine.c
+    ${CMAKE_SOURCE_DIR}/../main/wifi/wifi_retry_manager.c
+    ${CMAKE_SOURCE_DIR}/../main/mqtt/mqtt_retry_manager.c
 )
 target_link_libraries(tests GTest::gtest_main)
 

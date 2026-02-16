@@ -1,39 +1,15 @@
 # Unit Tests
 
-This directory contains unit tests that run on the host machine (not on ESP8266).
+Unit tests for garage door controller components using Google Test. Tests run on host machine (not ESP8266).
 
-## Building and Running Tests
+## Tests Covered
 
-### Windows (PowerShell)
-```powershell
-cd test
-mkdir build
-cd build
-cmake ..
-cmake --build .
-ctest --output-on-failure
-```
+- **State Machine**: Garage door state transitions and event handling
+- **WiFi Retry Manager**: Connection retry logic and backoff behavior  
+- **MQTT Retry Manager**: MQTT connection retry and reconnection handling
 
-Or use the custom target:
-```powershell
-cmake --build . --target run_tests
-```
+## Running Tests
 
-### Linux/macOS
-```bash
-cd test
-mkdir build && cd build
-cmake ..
-make
-ctest --output-on-failure
-```
+Use CMake Tools extension in VS Code. Steps would include using the CMake Project Outline in the VS Code sidebar, selecting the `tests` folder as the active folder, configuring, and building the code. 
+Then, you can utilize the Test Explorer to run tests.
 
-## What's Tested
-
-- **State Machine** (`test_state_machine.c`): Tests all garage door state transitions, event handling, and edge cases
-
-## Architecture
-
-The tests compile the pure C state machine code (`garage_state_machine.c`) using your native compiler (MSVC on Windows, GCC/Clang on Linux/macOS). This is separate from the ESP-IDF build which cross-compiles for ESP8266.
-
-The state machine has zero hardware dependencies, making it fully testable on any platform.

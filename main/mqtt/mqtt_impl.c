@@ -4,7 +4,6 @@
 #include "esp_err.h"
 #include <string.h>
 #include <stdio.h>
-#include "esp_log.h"
 
 static const char* MQTT_TAG = "mqtt_client";
 
@@ -84,13 +83,9 @@ static esp_err_t mqtt_event_handler_cb(esp_mqtt_event_handle_t event)
         case MQTT_EVENT_DATA:
             mqtt_hal_log_info(MQTT_TAG, "MQTT_EVENT_DATA");
             if (event->topic != NULL && event->topic_len > 0) {
-                // TODO: Figure out why mqtt_hal_log_info isn't working. 
-                // Also, we can refactor the logging into it's own HAL if we want. 
-                ESP_LOGI(MQTT_TAG, "TOPIC=%.*s", event->topic_len, event->topic);
                 mqtt_hal_log_info(MQTT_TAG, "TOPIC=%.*s", event->topic_len, event->topic);
             }
             if (event->data != NULL && event->data_len > 0) {
-                ESP_LOGI(MQTT_TAG, "DATA=%.*s", event->data_len, event->data);
                 mqtt_hal_log_info(MQTT_TAG, "DATA=%.*s", event->data_len, event->data);
             }
 

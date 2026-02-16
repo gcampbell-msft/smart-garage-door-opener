@@ -1,0 +1,31 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "prod",
+            "displayName": "PROD",
+            "description": "GCC 8.4.0 xtensa-lx106-elf",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/esp8266/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/esp8266/xtensa-lx106-elf/bin/xtensa-lx106-elf-g++.exe",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "TEST_MODE": "OFF"
+            },
+            "environment": {
+                "CMT_MINGW_PATH": "C:/esp8266/msys32/opt/xtensa-esp32-elf/bin"
+            }
+        },
+        {
+            "inherits": "prod",
+            "name": "test",
+            "displayName": "TEST",
+            "description": "GCC 8.4.0 xtensa-lx106-elf TEST",
+            "cacheVariables": {
+                "TEST_MODE": "ON"
+            }
+        }
+    ]
+}

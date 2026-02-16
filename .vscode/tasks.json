@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "cmake",
+            "label": "Builds the entire project",
+            "command": "build",
+            "targets": ["all"]
+        },
+        {
+            "type": "cmake",
+            "label": "Flashes the project",
+            "command": "build",
+            "targets": ["flash"],
+            "options": {
+                "environment": {
+                    "ESPBAUD": "115200",
+                    "ESPPORT": "COM3"
+                }
+            },
+        },
+        {
+            "type": "cmake",
+            "label": "Build and flash the project",
+            "command": "build",
+            "targets": ["all", "flash"],
+            "options": {
+                "environment": {
+                    "ESPBAUD": "115200",
+                    "ESPPORT": "COM3"
+                }
+            }
+        }
+    ]
+}
